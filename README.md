@@ -194,7 +194,7 @@ numbers match the held-out results, no difference (delta) is shown on the metric
 ## Live app
 
 ```
-https://<your-app-name>.streamlit.app
+https://telco-churn-ml-classifier-2026aj05331.streamlit.app/
 ```
 
 ---
