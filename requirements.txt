@@ -1,0 +1,15 @@
+# Exact versions resolved in the project .venv (Python 3.13.18), so a fresh
+# install reproduces the same numbers. Only the seven packages the app and the
+# training script actually import are listed here - jupyter and watchdog are
+# local development conveniences and are deliberately left out.
+#
+# scikit-learn is the pin that matters most: 1.9 deprecated
+# SVC(probability=True) with removal planned for 1.11, and the saved .joblib
+# files were pickled by this exact version.
+streamlit==1.66.1
+scikit-learn==1.9.1
+pandas==3.1.0
+numpy==2.5.4
+matplotlib==3.11.2
+seaborn==0.13.2
+joblib==1.6.0

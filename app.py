@@ -453,7 +453,7 @@ with st.sidebar:
             data=SAMPLE_CSV_PATH.read_bytes(),
             file_name="test_data.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
             help=f"The held-out {feature_info['n_test_rows']}-row stratified "
                  "20% split, with raw columns.",
         )
@@ -611,7 +611,7 @@ if target_warning:
     )
 
     st.markdown(f"#### Predictions - {display_names[selected_slug]}")
-    st.dataframe(predictions, use_container_width=True, height=420)
+    st.dataframe(predictions, width="stretch", height=420)
     st.download_button(
         "⬇ Download predictions csv",
         data=predictions.to_csv(index=False).encode(),
@@ -689,7 +689,7 @@ with tab_confusion:
 
     with left:
         cm_figure = plot_confusion_matrix(cm, display_names[selected_slug])
-        st.pyplot(cm_figure, use_container_width=True)
+        st.pyplot(cm_figure, width="stretch")
         plt.close(cm_figure)  # Streamlit reruns on every interaction; without
                               # this, figures accumulate until matplotlib warns.
 
@@ -715,7 +715,7 @@ with tab_confusion:
                 {"precision": "{:.4f}", "recall": "{:.4f}",
                  "f1-score": "{:.4f}", "support": "{:,}"}
             ),
-            use_container_width=True,
+            width="stretch",
         )
         if overall_accuracy is not None:
             st.caption(f"Overall accuracy: **{overall_accuracy:.4f}** "
@@ -756,11 +756,11 @@ with tab_compare:
 
     st.dataframe(
         table.style.format("{:.4f}").highlight_max(axis=0, props="font-weight:700;"),
-        use_container_width=True,
+        width="stretch",
     )
 
     comparison_figure = plot_model_comparison(comparison, model_slugs, display_names)
-    st.pyplot(comparison_figure, use_container_width=True)
+    st.pyplot(comparison_figure, width="stretch")
     plt.close(comparison_figure)
 
     best_slug = comparison["mcc"].idxmax()
@@ -780,7 +780,7 @@ with tab_compare:
                 "Score": [f"{comparison[k].max():.4f}" for k in METRIC_KEYS],
             }
         )
-        st.dataframe(winners, use_container_width=True, hide_index=True)
+        st.dataframe(winners, width="stretch", hide_index=True)
 
 
 # One footer for the whole page - it is position:fixed, so it shows under
