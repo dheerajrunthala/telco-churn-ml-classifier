@@ -1,0 +1,17 @@
+# Indigo/violet on a light base. Streamlit reads this automatically, so the app
+# looks the same locally and on Streamlit Community Cloud without any runtime
+# theming code.
+[theme]
+base = "light"
+primaryColor = "#6366F1"             # indigo-500: buttons, focus rings, active tab
+backgroundColor = "#FFFFFF"          # main canvas
+secondaryBackgroundColor = "#F1F5F9" # sidebar + metric card fill (slate-100)
+textColor = "#0F172A"                # slate-900
+font = "sans serif"
+
+[server]
+# Keeps the upload dialog sane for a ~200 KB csv.
+maxUploadSize = 10
+
+[browser]
+gatherUsageStats = false
