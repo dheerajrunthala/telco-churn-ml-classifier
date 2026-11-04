@@ -15,6 +15,8 @@ Run:  streamlit run app.py
 """
 
 import json
+import logging
+import sys
 from pathlib import Path
 
 import joblib
@@ -40,6 +42,16 @@ from sklearn.metrics import (
 # Paths and constants
 # ---------------------------------------------------------------------------
 matplotlib.use("Agg")
+
+# INFO-level logging to stdout, which is where Streamlit Community Cloud picks
+# up app logs. Only counts, names and error reasons are recorded - never any
+# content from an uploaded file.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [churn-app] %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger("churn_app")
 
 MODEL_DIR = Path("model")
 METRICS_PATH = MODEL_DIR / "metrics.json"
@@ -173,6 +185,8 @@ def load_artifacts():
     serialisable the way cache_data expects.
     """
     if not FEATURE_INFO_PATH.exists() or not METRICS_PATH.exists():
+        logger.error("Startup failed: %s or %s is missing",
+                     FEATURE_INFO_PATH, METRICS_PATH)
         return None, None, None
 
     feature_info = json.loads(FEATURE_INFO_PATH.read_text())
@@ -183,7 +197,11 @@ def load_artifacts():
         path = MODEL_DIR / meta["file"]
         if path.exists():
             models[slug] = joblib.load(path)
+        else:
+            logger.error("Model file missing: %s", path)
 
+    logger.info("Loaded %d model(s) from %s/: %s",
+                len(models), MODEL_DIR, ", ".join(models))
     return models, feature_info, baseline_metrics
 
 
@@ -430,7 +448,7 @@ if not models:
         "this page."
     )
     render_footer()
-    st.stop()
+    st.stop()  # logged by load_artifacts() above
 
 display_names = {s: m["display_name"] for s, m in feature_info["models"].items()}
 model_slugs = list(feature_info["models"].keys())
@@ -553,10 +571,13 @@ try:
     raw_bytes = uploaded_file.getvalue()
     raw_upload = pd.read_csv(uploaded_file)
 except pd.errors.EmptyDataError:
+    logger.warning("Upload rejected: file is empty")
     st.error("#### Could not read that file\n\nIt appears to be empty.")
     render_footer()
     st.stop()
 except Exception as exc:  # malformed csv, wrong delimiter, bad encoding
+    logger.warning("Upload rejected: could not parse as csv (%s)",
+                   type(exc).__name__)
     st.error(
         "#### Could not read that file as csv\n\n"
         f"`{type(exc).__name__}: {exc}`\n\n"
@@ -565,8 +586,18 @@ except Exception as exc:  # malformed csv, wrong delimiter, bad encoding
     render_footer()
     st.stop()
 
+logger.info("Upload received: %d rows, %d columns",
+            len(raw_upload), raw_upload.shape[1])
+
 problems = validate_upload(raw_upload, feature_info)
 if problems:
+    # Column names are part of the file's schema, not its data, so they are
+    # safe to log and are what makes a rejection diagnosable.
+    missing = [c for c in feature_info["required_features"]
+               if c not in raw_upload.columns]
+    logger.warning("Upload rejected: validation failed (%d missing column(s)%s)",
+                   len(missing),
+                   ": " + ", ".join(missing) if missing else "")
     st.error("#### This file cannot be scored\n\n" + "\n\n".join(problems))
     with st.expander("What the file needs"):
         st.markdown(
@@ -580,6 +611,8 @@ if problems:
     render_footer()
     st.stop()
 
+logger.info("Model selected: %s", selected_slug)
+
 clean_upload = clean_uploaded(raw_upload, feature_info)
 target_column = feature_info["target_column"]
 X_upload = clean_upload[feature_info["required_features"]]
@@ -591,6 +624,15 @@ st.sidebar.success(f"✅ {len(clean_upload):,} rows loaded")
 # ---------------------------------------------------------------------------
 target_warning = check_target(clean_upload, feature_info)
 if target_warning:
+    # Log the reason, not the warning prose, so the cases stay greppable.
+    target = feature_info["target_column"]
+    if target not in clean_upload.columns:
+        reason = "target column absent"
+    elif clean_upload[target].isna().any():
+        reason = f"{int(clean_upload[target].isna().sum())} unmappable label(s)"
+    else:
+        reason = "single-class target"
+    logger.warning("Scoring limited to predictions only: %s", reason)
     st.warning("#### " + target_warning)
 
     pipeline = models[selected_slug]
@@ -630,6 +672,7 @@ y_upload = clean_upload[target_column].astype("int64")
 
 file_signature = f"{uploaded_file.name}:{len(raw_bytes)}:{hash(raw_bytes)}"
 scored = score_all_models(file_signature, X_upload, y_upload)
+logger.info("Scored %d model(s) on %d rows", len(scored), len(y_upload))
 
 comparison = pd.DataFrame(
     {slug: scored[slug]["metrics"] for slug in model_slugs}
