@@ -1,16 +1,16 @@
 """
 Telco Customer Churn - Binary Classification
 =============================================
-M.Tech ML Assignment | BITS
+M.Tech ML Assignment 2 | BITS Pilani 
+Author: Dheeraj Runthala (2026AJ05331)
 
 Trains and compares five classifiers on the IBM Telco Customer Churn dataset:
 Logistic Regression, Decision Tree, K-Nearest Neighbors, Gaussian Naive Bayes, and SVM.
 
 Every model is wrapped in an sklearn Pipeline whose first step is a shared
-ColumnTransformer. That design choice matters a lot downstream: the persisted
-.joblib files accept a RAW csv (text TotalCharges, Yes/No categoricals and all),
-so the Streamlit app never has to re-implement preprocessing - it just calls
-pipeline.predict(raw_dataframe).
+ColumnTransformer, so the saved .joblib files accept a raw csv (text
+TotalCharges, Yes/No categoricals and all). The Streamlit app can therefore
+call pipeline.predict(raw_dataframe) without redoing any preprocessing.
 
 Run:  python train_models.py
 """
@@ -20,6 +20,7 @@ Run:  python train_models.py
 # Imports and global configuration
 # ---------------------------------------------------------------------------
 import json
+import warnings
 from pathlib import Path
 
 import joblib
@@ -79,17 +80,28 @@ ALL_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 pd.set_option("display.width", 120)
 pd.set_option("display.max_columns", 30)
 
+# scikit-learn 1.9 deprecated SVC(probability=True) in favour of
+# CalibratedClassifierCV(SVC(), ensemble=False), with removal slated for 1.11.
+# The assignment specifies SVC(probability=True) explicitly, so we keep it and
+# silence just that one message rather than letting it clutter the output. The
+# pinned scikit-learn version in requirements.txt is well before 1.11, so the
+# saved models stay loadable; revisit this if the pin is ever bumped.
+warnings.filterwarnings(
+    "ignore",
+    message=r"The `probability` parameter was deprecated",
+    category=FutureWarning,
+)
+
 
 # %%
 # ---------------------------------------------------------------------------
 # Step 1: load the raw dataset and explore it
 # ---------------------------------------------------------------------------
 def load_raw(path: Path = DATA_PATH) -> pd.DataFrame:
-    """Read the dataset exactly as shipped - no cleaning yet, on purpose.
+    """Read the dataset exactly as shipped, with no cleaning yet.
 
-    Reading it raw first lets us *see* the known defects (TotalCharges arriving
-    as text, blanks hiding as empty strings rather than NaN) instead of silently
-    papering over them.
+    Loading it raw makes the known defects visible first: TotalCharges comes in
+    as text, and its gaps are empty strings rather than NaN.
     """
     return pd.read_csv(path)
 
@@ -149,13 +161,12 @@ explore(raw_df)
 # Step 2: cleaning
 # ---------------------------------------------------------------------------
 def clean_raw(df: pd.DataFrame) -> pd.DataFrame:
-    """Repair the three known defects in the dataset.
+    """Apply the four cleaning steps the raw dataset needs.
 
-    This is the ONLY cleaning applied anywhere, and app.py mirrors it exactly.
-    Everything that needs fitted statistics (median imputation, scaling,
-    one-hot vocabulary) is deliberately NOT done here - it lives inside the
-    pipeline so it is learned from the training split alone and travels with
-    the saved model. Keeping those two concerns apart is what prevents leakage.
+    app.py mirrors this function exactly. Anything needing fitted statistics
+    (median imputation, scaling, one-hot vocabulary) stays out of here and
+    lives in the pipeline instead, so it is learned from the training split
+    only. Splitting it this way avoids leakage.
 
     1. drop customerID        - identifier, no signal
     2. TotalCharges -> float  - stored as text; blanks become NaN
@@ -215,15 +226,14 @@ print(f"{TARGET_COLUMN} encoded: "
 def build_preprocessor() -> ColumnTransformer:
     """Build the ColumnTransformer shared by all five models.
 
-    Using one identical preprocessor for every model is what makes the
-    comparison fair - any difference in the metrics is attributable to the
-    classifier, not to differing feature treatment.
+    One identical preprocessor keeps the comparison fair: metric differences
+    come from the classifier, not from different feature handling.
     """
     # Numeric branch: impute THEN scale.
     #  - median over mean: TotalCharges is right-skewed, so the median is the
     #    more robust fill value for the 11 gaps.
     #  - StandardScaler is not optional here: KNN and SVM are distance/kernel
-    #    based, so unscaled tenure (0-72) vs TotalCharges (0-8685) would let one
+    #    based, so unscaled tenure (0-72) vs TotalCharges (19-8685) would let one
     #    feature dominate. It also helps LogisticRegression's solver converge.
     numeric_branch = Pipeline(
         steps=[
@@ -236,9 +246,9 @@ def build_preprocessor() -> ColumnTransformer:
     #  - most_frequent is the only sensible strategy for unordered strings.
     #  - handle_unknown="ignore" means an unseen category in an uploaded CSV
     #    becomes an all-zero block instead of crashing the app.
-    #  - sparse_output=False is the critical flag: GaussianNB cannot accept a
+    #  - sparse_output=False matters most here: GaussianNB rejects a
     #    sparse matrix, and a dense output lets all five models share this one
-    #    transformer. The widened matrix is only ~45 columns, so dense is cheap.
+    #    transformer. The widened matrix is 46 columns, so dense is cheap.
     categorical_branch = Pipeline(
         steps=[
             ("impute", SimpleImputer(strategy="most_frequent")),
@@ -262,8 +272,8 @@ def build_pipelines() -> tuple[dict[str, Pipeline], dict[str, str]]:
 
     Returns (pipelines_by_slug, display_names_by_slug).
 
-    Each gets its own freshly built preprocessor instance (same recipe) so the
-    five pipelines are fully independent objects that can be pickled separately.
+    Each gets its own preprocessor instance (same recipe) so the five pipelines
+    are independent objects that pickle separately.
 
     probability=True on SVC is required because the assignment asks for AUC via
     predict_proba; it makes SVC fit an internal 5-fold Platt calibration, which
@@ -370,3 +380,224 @@ print(f"  blank TotalCharges carried into the test file: "
       f"{test_raw_df['TotalCharges'].astype(str).str.strip().eq('').sum()}")
 
 print("\nPhase 1 complete.")
+
+
+# %%
+# ---------------------------------------------------------------------------
+# Step 5: imports for Part 2 (training + evaluation)
+# ---------------------------------------------------------------------------
+import time
+
+import sklearn
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    matthews_corrcoef,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+
+# The order the six metrics appear in every table, json file and st.metric row.
+METRIC_NAMES = ["accuracy", "auc", "precision", "recall", "f1", "mcc"]
+
+
+# %%
+# ---------------------------------------------------------------------------
+# Step 6: the evaluation function
+# ---------------------------------------------------------------------------
+def evaluate(pipeline: Pipeline, X_eval: pd.DataFrame, y_eval: pd.Series) -> dict:
+    """Score a fitted pipeline on six metrics, with churn (1) as the positive class.
+
+    Accuracy alone is not enough: at a 26.5% churn rate, predicting "nobody
+    churns" already scores 73.5%. The other five metrics do the real work.
+
+      accuracy  - overall hit rate; included but read with the imbalance in mind
+      auc       - threshold-independent ranking quality, needs predict_proba
+      precision - of those flagged as churners, how many really churned
+      recall    - of the real churners, how many we caught (the costly miss)
+      f1        - harmonic mean of the two above
+      mcc       - correlation over the whole confusion matrix; only scores high
+                  when both classes are predicted well, so it is the most
+                  reliable single number on imbalanced data
+    """
+    y_pred = pipeline.predict(X_eval)
+
+    # Column 1 = P(class 1) = P(churn). AUC must be computed from these
+    # continuous scores, never from the hard 0/1 predictions.
+    y_proba = pipeline.predict_proba(X_eval)[:, 1]
+
+    return {
+        "accuracy": accuracy_score(y_eval, y_pred),
+        "auc": roc_auc_score(y_eval, y_proba),
+        # zero_division=0 guards the degenerate case where a model predicts no
+        # positives at all - report 0 rather than emitting a warning and nan.
+        "precision": precision_score(y_eval, y_pred, pos_label=1, zero_division=0),
+        "recall": recall_score(y_eval, y_pred, pos_label=1, zero_division=0),
+        "f1": f1_score(y_eval, y_pred, pos_label=1, zero_division=0),
+        "mcc": matthews_corrcoef(y_eval, y_pred),
+    }
+
+
+# %%
+# ---------------------------------------------------------------------------
+# Step 7: train all five pipelines and evaluate on the held-out test set
+# ---------------------------------------------------------------------------
+print("\n" + "=" * 78)
+print("PHASE 2 - TRAINING")
+print("=" * 78)
+
+results = {}
+fit_seconds = {}
+
+for slug, pipeline in pipelines.items():
+    print(f"\nFitting {display_names[slug]} ...", end=" ", flush=True)
+    started = time.perf_counter()
+
+    # .fit on the pipeline fits the preprocessor on the TRAINING split only
+    # (learning the median, the scaler's mean/std and the one-hot vocabulary)
+    # and then fits the classifier on the transformed output. The test split
+    # never influences any of those statistics.
+    pipeline.fit(X_train, y_train)
+
+    fit_seconds[slug] = time.perf_counter() - started
+    results[slug] = evaluate(pipeline, X_test, y_test)
+    print(f"done in {fit_seconds[slug]:.1f}s")
+
+
+# %%
+# ---------------------------------------------------------------------------
+# Step 8: comparison table
+# ---------------------------------------------------------------------------
+comparison_df = (
+    pd.DataFrame(results)
+    .T.loc[list(pipelines.keys()), METRIC_NAMES]
+    .rename(index=display_names)
+    .round(4)
+)
+comparison_df.columns = ["Accuracy", "AUC", "Precision", "Recall", "F1", "MCC"]
+comparison_df.index.name = "ML Model Name"
+
+print("\n" + "=" * 78)
+print("PHASE 2 - TEST-SET COMPARISON (positive class = churn)")
+print("=" * 78 + "\n")
+print(comparison_df.to_string())
+
+# Flag the leader on each metric. MCC is the headline figure for the write-up
+# because it is the metric least fooled by the class imbalance.
+print("\nBest model per metric:")
+for column in comparison_df.columns:
+    winner = comparison_df[column].idxmax()
+    print(f"  {column:10s} {winner:22s} {comparison_df.loc[winner, column]:.4f}")
+
+print(f"\nFit time (seconds): "
+      f"{ {display_names[s]: round(t, 1) for s, t in fit_seconds.items()} }")
+
+
+# %%
+# ---------------------------------------------------------------------------
+# Step 9: persist the artifacts
+# ---------------------------------------------------------------------------
+MODEL_DIR.mkdir(exist_ok=True)
+
+print("\n" + "=" * 78)
+print("PHASE 2 - SAVING ARTIFACTS")
+print("=" * 78 + "\n")
+
+# Each .joblib holds the full pipeline (preprocessor + fitted classifier), so
+# app.py can hand it a raw dataframe. compress=3 is a reasonable middle setting:
+# it shrinks the SVC file (~2700 support vectors) for a negligible
+# load-time cost.
+for slug, pipeline in pipelines.items():
+    path = MODEL_DIR / f"{slug}.joblib"
+    joblib.dump(pipeline, path, compress=3)
+    print(f"  {path}  ({path.stat().st_size / 1024:.0f} KB)")
+
+# metrics.json - read by both the README table and the app, so the report cannot
+# drift out of sync with the trained models.
+# Deliberately metrics only - no wall-clock timings. fit_seconds would change
+# on every run and dirty the git diff even though the six metrics are
+# bit-identical; the timings are still printed above for the write-up.
+metrics_payload = {
+    slug: {
+        "display_name": display_names[slug],
+        **{name: round(float(results[slug][name]), 6) for name in METRIC_NAMES},
+    }
+    for slug in pipelines
+}
+metrics_path = MODEL_DIR / "metrics.json"
+metrics_path.write_text(json.dumps(metrics_payload, indent=2) + "\n")
+print(f"  {metrics_path}")
+
+# feature_info.json - the contract between training and the app. app.py checks
+# uploads against these column lists rather than keeping its own copy.
+feature_info = {
+    "target_column": TARGET_COLUMN,
+    "positive_class": {"label": "Yes", "encoded": 1, "meaning": "customer churned"},
+    "target_mapping": {"Yes": 1, "No": 0},
+    "drop_columns": DROP_COLUMNS,
+    "numeric_features": NUMERIC_FEATURES,
+    "categorical_features": CATEGORICAL_FEATURES,
+    # The columns an upload MUST contain to be scoreable (target excluded).
+    "required_features": ALL_FEATURES,
+    # Every column of the original file, for reference / nicer error messages.
+    "all_raw_columns": list(raw_df.columns),
+    "n_features_raw": len(ALL_FEATURES),
+    "n_features_encoded": int(len(_probe.get_feature_names_out())),
+    "random_state": RANDOM_STATE,
+    "test_size": TEST_SIZE,
+    "n_train_rows": int(len(X_train)),
+    "n_test_rows": int(len(X_test)),
+    "class_distribution_full": {
+        "No": int((y == 0).sum()),
+        "Yes": int((y == 1).sum()),
+        "churn_rate_pct": round(float(y.mean() * 100), 2),
+    },
+    "cleaning_steps": [
+        "drop customerID if present",
+        "TotalCharges -> numeric via pd.to_numeric(errors='coerce')",
+        "SeniorCitizen -> str so it is one-hot encoded, not scaled",
+        "Churn Yes/No -> 1/0",
+    ],
+    "models": {
+        slug: {"display_name": display_names[slug], "file": f"{slug}.joblib"}
+        for slug in pipelines
+    },
+    # Recorded so a version mismatch at deploy time is diagnosable rather than
+    # a mysterious unpickling warning.
+    "sklearn_version": sklearn.__version__,
+    "pandas_version": pd.__version__,
+    "numpy_version": np.__version__,
+}
+feature_info_path = MODEL_DIR / "feature_info.json"
+feature_info_path.write_text(json.dumps(feature_info, indent=2) + "\n")
+print(f"  {feature_info_path}")
+
+
+# %%
+# ---------------------------------------------------------------------------
+# Step 10: round-trip check
+# ---------------------------------------------------------------------------
+# Reload every model from disk and score the RAW test csv with it. Confirms the
+# saved pipelines handle unprocessed input, the same way app.py will use them.
+print("\n" + "=" * 78)
+print("PHASE 2 - ROUND-TRIP CHECK (reload from disk, score the raw csv)")
+print("=" * 78 + "\n")
+
+raw_test_from_disk = pd.read_csv(TEST_CSV_PATH)
+cleaned_test_from_disk = clean_raw(raw_test_from_disk)
+X_disk = cleaned_test_from_disk[ALL_FEATURES]
+y_disk = cleaned_test_from_disk[TARGET_COLUMN]
+
+for slug in pipelines:
+    reloaded = joblib.load(MODEL_DIR / f"{slug}.joblib")
+    disk_metrics = evaluate(reloaded, X_disk, y_disk)
+    # Must match the in-memory numbers to the last decimal.
+    matches = all(
+        np.isclose(disk_metrics[name], results[slug][name]) for name in METRIC_NAMES
+    )
+    status = "MATCH" if matches else "MISMATCH"
+    print(f"  {display_names[slug]:22s} {status}  "
+          f"(accuracy {disk_metrics['accuracy']:.4f}, mcc {disk_metrics['mcc']:.4f})")
+
+print("\nPhase 2 complete.")

@@ -1,0 +1,124 @@
+{
+  "target_column": "Churn",
+  "positive_class": {
+    "label": "Yes",
+    "encoded": 1,
+    "meaning": "customer churned"
+  },
+  "target_mapping": {
+    "Yes": 1,
+    "No": 0
+  },
+  "drop_columns": [
+    "customerID"
+  ],
+  "numeric_features": [
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges"
+  ],
+  "categorical_features": [
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod"
+  ],
+  "required_features": [
+    "tenure",
+    "MonthlyCharges",
+    "TotalCharges",
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod"
+  ],
+  "all_raw_columns": [
+    "customerID",
+    "gender",
+    "SeniorCitizen",
+    "Partner",
+    "Dependents",
+    "tenure",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+    "MonthlyCharges",
+    "TotalCharges",
+    "Churn"
+  ],
+  "n_features_raw": 19,
+  "n_features_encoded": 46,
+  "random_state": 5331,
+  "test_size": 0.2,
+  "n_train_rows": 5634,
+  "n_test_rows": 1409,
+  "class_distribution_full": {
+    "No": 5174,
+    "Yes": 1869,
+    "churn_rate_pct": 26.54
+  },
+  "cleaning_steps": [
+    "drop customerID if present",
+    "TotalCharges -> numeric via pd.to_numeric(errors='coerce')",
+    "SeniorCitizen -> str so it is one-hot encoded, not scaled",
+    "Churn Yes/No -> 1/0"
+  ],
+  "models": {
+    "logistic_regression": {
+      "display_name": "Logistic Regression",
+      "file": "logistic_regression.joblib"
+    },
+    "decision_tree": {
+      "display_name": "Decision Tree",
+      "file": "decision_tree.joblib"
+    },
+    "knn": {
+      "display_name": "K-Nearest Neighbors",
+      "file": "knn.joblib"
+    },
+    "gaussian_nb": {
+      "display_name": "Gaussian Naive Bayes",
+      "file": "gaussian_nb.joblib"
+    },
+    "svm": {
+      "display_name": "SVM (SVC)",
+      "file": "svm.joblib"
+    }
+  },
+  "sklearn_version": "1.9.1",
+  "pandas_version": "3.1.0",
+  "numpy_version": "2.5.4"
+}
