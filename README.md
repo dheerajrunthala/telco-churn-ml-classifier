@@ -122,6 +122,8 @@ Test set contains 374 actual churners out of 1,409 customers.
 | Gaussian Naive Bayes | 652 | 383 | 55 | 319 | 702 |
 | SVM (SVC) | 930 | 105 | 168 | 206 | 311 |
 
+Note: On the BITS Virtual Lab (x86, Python 3.12) the Decision Tree scored slightly differently (accuracy 0.7410, MCC 0.3476) because of platform-level floating-point tie-breaking in a fully grown tree. The other four models produced identical results. The table above uses the committed models that the deployed app loads.
+
 ---
 
 ## e. Observations
